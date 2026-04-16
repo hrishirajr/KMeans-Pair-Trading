@@ -9,6 +9,8 @@ Enhancements over V1:
 - Spread / Z-score plots
 - Cleaner walk-forward framework
 
+Author: hrishirajr (AI Supported) 
+
 """
 
 from __future__ import annotations
