@@ -42,7 +42,7 @@ class StrategyConfig:
     sector_csv_path: str = "sector_map.csv"
 
     train_window: int = 252
-    test_window: int = 63
+    test_window: int = 126
     step_size: int = 63
 
     n_clusters: int = 5
@@ -682,7 +682,7 @@ def main():
         price_csv_path="prices.csv",
         sector_csv_path="sector_map.csv",
         train_window=252,
-        test_window=63,
+        test_window=126,
         step_size=63,
         n_clusters=5,
         top_pairs_per_cluster=3,
@@ -697,7 +697,7 @@ def main():
         z_exit=0.5,
         z_stop=3.5,
         max_holding_period=20,
-        rolling_beta_window=60,
+        rolling_beta_window=30,
         transaction_cost_per_leg=0.0005,
         random_state=42,
         plot_examples=True,
@@ -744,6 +744,16 @@ def main():
     else:
         print("No portfolio created.")
 
+    # CSV outputs (written before plots so they aren't blocked by plt.show)
+    if not summary_df.empty:
+        summary_df.to_csv("pair_summary_v2.csv", index=False)
+    if not trade_log_df.empty:
+        trade_log_df.to_csv("trade_log_v2.csv", index=False)
+    if not pair_selection_df.empty:
+        pair_selection_df.to_csv("selected_pairs_v2.csv", index=False)
+    if not portfolio_df.empty:
+        portfolio_df.to_csv("portfolio_returns_v2.csv")
+
     if not portfolio_df.empty:
         plot_portfolio_equity(portfolio_df)
 
@@ -758,16 +768,6 @@ def main():
                 stock_b = parts[2]
                 plot_pair_example(df, stock_a, stock_b, title_suffix=f"| {pair_name}")
                 shown += 1
-
-    # Optional CSV outputs
-    if not summary_df.empty:
-        summary_df.to_csv("pair_summary_v2.csv", index=False)
-    if not trade_log_df.empty:
-        trade_log_df.to_csv("trade_log_v2.csv", index=False)
-    if not pair_selection_df.empty:
-        pair_selection_df.to_csv("selected_pairs_v2.csv", index=False)
-    if not portfolio_df.empty:
-        portfolio_df.to_csv("portfolio_returns_v2.csv")
 
 
 if __name__ == "__main__":
