@@ -42,7 +42,7 @@ class StrategyConfig:
     sector_csv_path: str = "sector_map.csv"
 
     train_window: int = 252
-    test_window: int = 126
+    test_window: int = 63
     step_size: int = 63
 
     n_clusters: int = 5
@@ -687,9 +687,9 @@ def main():
         n_clusters=5,
         top_pairs_per_cluster=3,
         same_sector_only=True,
-        min_correlation=0.70,
-        max_cointegration_pvalue=0.05,
-        max_adf_pvalue=0.10,
+        min_correlation=0.60,
+        max_cointegration_pvalue=0.10,
+        max_adf_pvalue=0.15,
         min_half_life=2,
         max_half_life=60,
         z_window=20,
@@ -700,7 +700,7 @@ def main():
         rolling_beta_window=30,
         transaction_cost_per_leg=0.0005,
         random_state=42,
-        plot_examples=True,
+        plot_examples=False,
         example_plot_count=3
     )
 
@@ -744,16 +744,6 @@ def main():
     else:
         print("No portfolio created.")
 
-    # CSV outputs (written before plots so they aren't blocked by plt.show)
-    if not summary_df.empty:
-        summary_df.to_csv("pair_summary_v2.csv", index=False)
-    if not trade_log_df.empty:
-        trade_log_df.to_csv("trade_log_v2.csv", index=False)
-    if not pair_selection_df.empty:
-        pair_selection_df.to_csv("selected_pairs_v2.csv", index=False)
-    if not portfolio_df.empty:
-        portfolio_df.to_csv("portfolio_returns_v2.csv")
-
     if not portfolio_df.empty:
         plot_portfolio_equity(portfolio_df)
 
@@ -768,6 +758,16 @@ def main():
                 stock_b = parts[2]
                 plot_pair_example(df, stock_a, stock_b, title_suffix=f"| {pair_name}")
                 shown += 1
+
+    # Optional CSV outputs
+    if not summary_df.empty:
+        summary_df.to_csv("pair_summary_v2.csv", index=False)
+    if not trade_log_df.empty:
+        trade_log_df.to_csv("trade_log_v2.csv", index=False)
+    if not pair_selection_df.empty:
+        pair_selection_df.to_csv("selected_pairs_v2.csv", index=False)
+    if not portfolio_df.empty:
+        portfolio_df.to_csv("portfolio_returns_v2.csv")
 
 
 if __name__ == "__main__":

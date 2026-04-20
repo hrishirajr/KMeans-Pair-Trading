@@ -8,3 +8,5 @@ env/
 .env
 .DS_Store
 .ipynb_checkpoints/
+CLAUDE.md
+*.md
