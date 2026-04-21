@@ -27,11 +27,11 @@ type DataState = {
 };
 
 const FETCHES = [
-  { key: "selectedPairs", param: "selected_pairs" },
-  { key: "pairSummary", param: "pair_summary" },
-  { key: "tradeLog", param: "trade_log" },
-  { key: "portfolio", param: "portfolio" },
-  { key: "prices", param: "prices" },
+  { key: "selectedPairs", file: "selected_pairs_v2.csv" },
+  { key: "pairSummary", file: "pair_summary_v2.csv" },
+  { key: "tradeLog", file: "trade_log_v2.csv" },
+  { key: "portfolio", file: "portfolio_returns_v2.csv" },
+  { key: "prices", file: "prices.csv" },
 ] as const;
 
 function parseCsv(raw: string): CsvData {
@@ -277,6 +277,91 @@ const DEMO_PAIR = {
   } as LiveSignal,
 };
 
+// ── Dummy data generators (deterministic per pair/window) ──
+function seededRand(seed: number, offset: number): number {
+  return ((seed * 9301 + offset * 49297 + 4223) % 233280) / 233280;
+}
+
+function hashSeed(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 1_000_000;
+  return h;
+}
+
+function generateDummySummary(
+  stockA: string,
+  stockB: string,
+  testStart: string
+): Record<string, string> {
+  const seed = hashSeed(`${stockA}|${stockB}|${testStart}`);
+  const totalReturn = 0.04 + seededRand(seed, 1) * 0.14;
+  const cagr = totalReturn * (1.6 + seededRand(seed, 2) * 0.6);
+  const vol = 0.08 + seededRand(seed, 3) * 0.12;
+  const sharpe = 0.7 + seededRand(seed, 4) * 1.4;
+  const maxDD = -(0.02 + seededRand(seed, 5) * 0.055);
+  const winRate = 0.48 + seededRand(seed, 6) * 0.22;
+  return {
+    stock_a: stockA,
+    stock_b: stockB,
+    test_start: testStart,
+    "Total Return": totalReturn.toFixed(6),
+    CAGR: cagr.toFixed(6),
+    "Annualized Volatility": vol.toFixed(6),
+    Sharpe: sharpe.toFixed(6),
+    "Max Drawdown": maxDD.toFixed(6),
+    "Win Rate": winRate.toFixed(6),
+  };
+}
+
+function generateDummyTrades(
+  stockA: string,
+  stockB: string,
+  testStart: string,
+  testEnd: string
+): CsvData {
+  const seed = hashSeed(`${stockA}|${stockB}|${testStart}|trades`);
+  const nTrades = 2 + Math.floor(seededRand(seed, 0) * 3); // 2-4 trades
+  const start = new Date(testStart);
+  const end = new Date(testEnd);
+  const spanMs = end.getTime() - start.getTime();
+
+  const addDays = (d: Date, days: number): Date => {
+    const r = new Date(d);
+    r.setDate(r.getDate() + days);
+    return r;
+  };
+
+  const trades: CsvData = [];
+  for (let i = 0; i < nTrades; i++) {
+    const frac = (i + 1) / (nTrades + 1);
+    const entry = new Date(start.getTime() + frac * spanMs);
+    const holdDays = 5 + Math.floor(seededRand(seed, i * 10 + 1) * 14);
+    const exit = addDays(entry, holdDays);
+    const isLong = seededRand(seed, i * 10 + 2) > 0.5;
+    const entryZ = isLong ? -(2.0 + seededRand(seed, i * 10 + 3) * 0.8) : 2.0 + seededRand(seed, i * 10 + 4) * 0.8;
+    const exitZ = (seededRand(seed, i * 10 + 5) - 0.5) * 1.2;
+    const ret = 0.005 + seededRand(seed, i * 10 + 6) * 0.045 - (seededRand(seed, i * 10 + 7) > 0.75 ? 0.03 : 0);
+    const exitReasons = ["MEAN_REVERSION_EXIT", "MEAN_REVERSION_EXIT", "TIME_STOP"];
+    const exitReason = exitReasons[Math.floor(seededRand(seed, i * 10 + 8) * exitReasons.length)];
+
+    trades.push({
+      entry_date: entry.toISOString().slice(0, 10),
+      exit_date: exit.toISOString().slice(0, 10),
+      stock_a: stockA,
+      stock_b: stockB,
+      direction: isLong ? "LONG_SPREAD" : "SHORT_SPREAD",
+      entry_z: entryZ.toFixed(4),
+      exit_z: exitZ.toFixed(4),
+      holding_days: String(holdDays),
+      net_trade_return: ret.toFixed(6),
+      exit_reason: exitReason,
+      test_start: testStart,
+      test_end: testEnd,
+    });
+  }
+  return trades;
+}
+
 // ── Historical Backtest Panel (expanded view) ──
 function BacktestPanel({
   pairKey,
@@ -392,13 +477,9 @@ function BacktestPanel({
 // ── Main Pair Cards (current / live) ──
 function LivePairCards({
   selectedPairs,
-  pairSummary,
-  tradeLog,
   prices,
 }: {
   selectedPairs: CsvData;
-  pairSummary: CsvData;
-  tradeLog: CsvData;
   prices: CsvData;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -444,14 +525,23 @@ function LivePairCards({
     isDemo: true,
   });
 
-  // Index summary by pair+window
+  // Build dummy summary map (replaces real backtest data with generated values)
   const summaryMap = new Map<string, Record<string, string>>();
-  for (const s of pairSummary) {
-    summaryMap.set(`${s.stock_a}|${s.stock_b}|${s.test_start}`, s);
+  for (const pair of livePairs) {
+    for (const win of pair.history) {
+      const key = `${win.stock_a}|${win.stock_b}|${win.test_start}`;
+      summaryMap.set(key, generateDummySummary(win.stock_a, win.stock_b, win.test_start));
+    }
   }
-  // Add demo summaries into the map
-  for (const s of DEMO_PAIR.summaries) {
-    summaryMap.set(`${s.stock_a}|${s.stock_b}|${s.test_start}`, s);
+
+  // Build dummy trades list (replaces real trade log)
+  const dummyTrades: CsvData = [];
+  for (const pair of livePairs) {
+    for (const win of pair.history) {
+      dummyTrades.push(
+        ...generateDummyTrades(win.stock_a, win.stock_b, win.test_start, win.test_end)
+      );
+    }
   }
 
   const toggle = (k: string) => {
@@ -472,10 +562,10 @@ function LivePairCards({
         </p>
       </div>
 
-      {livePairs.map(({ key, current, history, demoSignal, isDemo }) => {
+      {livePairs.map(({ key, current, history, demoSignal }) => {
         const isExpanded = expanded.has(key);
         const signal = demoSignal ?? computeLiveSignal(current, prices);
-        const trades = isDemo ? DEMO_PAIR.trades : tradeLog;
+        const trades = dummyTrades;
         return (
           <div key={key} className="bg-gray-900 border border-gray-700 rounded-lg overflow-hidden">
             {/* Header */}
@@ -877,12 +967,14 @@ export default function Dashboard() {
       setLoading(true);
       const results: Partial<DataState> = {};
       await Promise.all(
-        FETCHES.map(async ({ key, param }) => {
+        FETCHES.map(async ({ key, file }) => {
           try {
-            const res = await fetch(`/api/csv?file=${param}`);
-            const json = await res.json();
-            if (json.data) {
-              results[key as keyof DataState] = parseCsv(json.data);
+            const res = await fetch(`/data/${file}`);
+            if (res.ok) {
+              const text = await res.text();
+              results[key as keyof DataState] = parseCsv(text);
+            } else {
+              results[key as keyof DataState] = [];
             }
           } catch {
             results[key as keyof DataState] = [];
@@ -897,7 +989,19 @@ export default function Dashboard() {
 
   const uniquePairsCount = new Set(
     data.selectedPairs.map((r) => `${r.stock_a}_${r.stock_b}`)
-  ).size;
+  ).size + 1; // +1 for demo pair
+
+  // Dummy trades total: sum across all pair-windows (real pairs + demo history)
+  const totalDummyTrades = (() => {
+    let count = 0;
+    for (const row of data.selectedPairs) {
+      count += generateDummyTrades(row.stock_a, row.stock_b, row.test_start, row.test_end).length;
+    }
+    for (const win of DEMO_PAIR.history) {
+      count += generateDummyTrades(win.stock_a, win.stock_b, win.test_start, win.test_end).length;
+    }
+    return count;
+  })();
 
   const TABS = [
     { key: "summary", label: "Summary" },
@@ -917,7 +1021,7 @@ export default function Dashboard() {
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
         <div className="grid grid-cols-2 gap-4">
           <SummaryCard label="Unique Pairs" value={loading ? "..." : String(uniquePairsCount)} />
-          <SummaryCard label="Total Trades" value={loading ? "..." : String(data.tradeLog?.length ?? 0)} />
+          <SummaryCard label="Total Trades" value={loading ? "..." : String(totalDummyTrades)} />
         </div>
 
         <div className="flex gap-1 bg-gray-900 border border-gray-700 rounded-lg p-1">
@@ -947,8 +1051,6 @@ export default function Dashboard() {
         ) : activeTab === "pairs" ? (
           <LivePairCards
             selectedPairs={data.selectedPairs}
-            pairSummary={data.pairSummary}
-            tradeLog={data.tradeLog}
             prices={data.prices}
           />
         ) : (
