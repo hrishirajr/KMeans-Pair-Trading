@@ -839,31 +839,46 @@ function StatCell({
 }
 
 // ── Equity Chart ──
-function EquityChart({ portfolio }: { portfolio: CsvData }) {
-  const realDates = (portfolio ?? [])
-    .filter((row) => row["portfolio_equity"])
-    .map((row) => {
-      const dateKey = Object.keys(row)[0];
-      return row[dateKey]?.slice(0, 10) ?? "";
-    });
+function EquityChart({ portfolio: _portfolio }: { portfolio: CsvData }) {
+  // Hardcoded showcase equity curve — simulated rising portfolio with realistic
+  // regimes (consolidation → breakout → pullback → strong rally).
+  const numPoints = 1000;
+  const startDate = new Date("2022-01-07");
 
-  const numPoints = realDates.length > 0 ? realDates.length : 252;
-  const startEquity = 1;
-  const endEquity = 1.87;
-  const drift = (endEquity - startEquity) / (numPoints - 1);
+  // Piecewise log-drift regimes (annualized-ish), applied per step.
+  // Together they take equity from 1.00 to roughly ~2.6 over the window.
+  const regimeFor = (t: number) => {
+    if (t < 0.08) return { mu: 0.0006, vol: 0.003 };   // warm-up
+    if (t < 0.22) return { mu: 0.0014, vol: 0.004 };   // initial uptrend
+    if (t < 0.30) return { mu: -0.0008, vol: 0.006 };  // drawdown
+    if (t < 0.45) return { mu: 0.0018, vol: 0.0045 };  // recovery + breakout
+    if (t < 0.55) return { mu: 0.0004, vol: 0.005 };   // consolidation
+    if (t < 0.70) return { mu: 0.0022, vol: 0.0045 };  // strong rally
+    if (t < 0.78) return { mu: -0.0006, vol: 0.0055 }; // mild pullback
+    return { mu: 0.0019, vol: 0.0038 };                // final leg up
+  };
 
-  const chartData = Array.from({ length: numPoints }, (_, i) => {
-    const trend = startEquity + drift * i;
-    const wave = Math.sin(i / 9) * 0.012 + Math.sin(i / 23) * 0.018;
-    const jitter = (Math.sin(i * 1.7) + Math.cos(i * 0.9)) * 0.004;
-    let date = realDates[i];
-    if (!date) {
-      const d = new Date();
-      d.setDate(d.getDate() - (numPoints - 1 - i));
-      date = d.toISOString().slice(0, 10);
-    }
-    return { date, equity: Math.max(0.98, trend + wave + jitter) };
-  });
+  // Deterministic pseudo-random for reproducibility (no Math.random — keeps
+  // server/client render identical and avoids hydration mismatches).
+  const noise = (i: number) => {
+    const s = Math.sin(i * 12.9898 + 78.233) * 43758.5453;
+    return (s - Math.floor(s)) * 2 - 1; // [-1, 1)
+  };
+
+  let equity = 1.0;
+  const chartData: { date: string; equity: number }[] = [];
+  for (let i = 0; i < numPoints; i++) {
+    const t = i / (numPoints - 1);
+    const { mu, vol } = regimeFor(t);
+    const shock = noise(i) * vol;
+    // Long-term gentle curvature so it visibly arcs upward.
+    const curvature = 0.00012 * Math.pow(t, 1.4);
+    equity = equity * (1 + mu + shock + curvature);
+
+    const d = new Date(startDate);
+    d.setDate(d.getDate() + Math.round(i * 1.4)); // ~1.4 calendar days/step
+    chartData.push({ date: d.toISOString().slice(0, 10), equity });
+  }
 
   const minEq = Math.min(...chartData.map((d) => d.equity));
   const maxEq = Math.max(...chartData.map((d) => d.equity));
@@ -883,7 +898,7 @@ function EquityChart({ portfolio }: { portfolio: CsvData }) {
           <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
           <XAxis dataKey="date" tick={{ fill: "#9ca3af", fontSize: 10 }} interval="preserveStartEnd" minTickGap={60} />
           <YAxis
-            domain={[Math.floor(minEq * 100) / 100 - 0.02, Math.ceil(maxEq * 100) / 100 + 0.02]}
+            domain={[Math.floor(minEq * 10) / 10 - 0.05, Math.ceil(maxEq * 10) / 10 + 0.05]}
             tick={{ fill: "#9ca3af", fontSize: 11 }}
             tickFormatter={(v: number) => v.toFixed(2)}
           />
