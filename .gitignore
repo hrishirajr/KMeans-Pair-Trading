@@ -5,8 +5,12 @@ __pycache__/
 .venv/
 venv/
 env/
+myenv/
 .env
+launchd.log
+launchd.err.log
 .DS_Store
 .ipynb_checkpoints/
 CLAUDE.md
 *.md
+!aws/*.md

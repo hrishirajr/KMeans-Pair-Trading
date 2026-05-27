@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import Papa from "papaparse";
 import {
   LineChart,
@@ -15,6 +16,7 @@ import {
   Area,
   AreaChart,
 } from "recharts";
+import { openTrade } from "@/lib/trades";
 
 type CsvData = Record<string, string>[];
 
@@ -47,6 +49,18 @@ function fmt(val: string | undefined, type: "pct" | "num2" | "num4" | "raw" = "r
   if (type === "num2") return n.toFixed(2);
   if (type === "num4") return n.toFixed(4);
   return val;
+}
+
+// True when the latest pair window's test_end is today or in the future.
+// If false, the most recent walk-forward iteration ended in the past — there
+// are no live tradeable signals.
+function isLiveWindow(latestTestEnd: string | undefined): boolean {
+  if (!latestTestEnd) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const end = new Date(latestTestEnd);
+  if (isNaN(end.getTime())) return false;
+  return end >= today;
 }
 
 function colorClass(val: string | undefined | number): string {
@@ -106,260 +120,6 @@ function computeLiveSignal(
     };
   }
   return { spread: z, direction: "HOLD", legs: [] };
-}
-
-// ── Demo Pair (for UI demonstration when no live signal is active) ──
-const DEMO_PAIR = {
-  key: "DEMO|HDFCBANK|ICICIBANK",
-  current: {
-    test_start: "2026-02-09",
-    test_end: "2026-08-07",
-    stock_a: "HDFCBANK",
-    stock_b: "ICICIBANK",
-    sector: "BANKING",
-    cluster: "2",
-    correlation: "0.8543",
-    cointegration_pvalue: "0.0087",
-    spread_adf_pvalue: "0.0124",
-    hedge_ratio: "1.2200",
-    half_life: "6.4",
-    pair_score: "-0.7121",
-  } as Record<string, string>,
-  history: [
-    {
-      test_start: "2025-08-11",
-      test_end: "2026-02-06",
-      stock_a: "HDFCBANK",
-      stock_b: "ICICIBANK",
-      sector: "BANKING",
-      cluster: "2",
-      correlation: "0.8297",
-      cointegration_pvalue: "0.0143",
-      spread_adf_pvalue: "0.0189",
-      hedge_ratio: "1.1900",
-      half_life: "7.2",
-      pair_score: "-0.6812",
-    },
-    {
-      test_start: "2025-02-10",
-      test_end: "2025-08-08",
-      stock_a: "HDFCBANK",
-      stock_b: "ICICIBANK",
-      sector: "BANKING",
-      cluster: "2",
-      correlation: "0.8107",
-      cointegration_pvalue: "0.0211",
-      spread_adf_pvalue: "0.0276",
-      hedge_ratio: "1.1540",
-      half_life: "8.1",
-      pair_score: "-0.6432",
-    },
-  ] as CsvData,
-  summaries: [
-    {
-      test_start: "2025-08-11",
-      test_end: "2026-02-06",
-      stock_a: "HDFCBANK",
-      stock_b: "ICICIBANK",
-      "Total Return": "0.0842",
-      CAGR: "0.1712",
-      "Annualized Volatility": "0.1243",
-      Sharpe: "1.3760",
-      "Max Drawdown": "-0.0412",
-      "Win Rate": "0.5714",
-    },
-    {
-      test_start: "2025-02-10",
-      test_end: "2025-08-08",
-      stock_a: "HDFCBANK",
-      stock_b: "ICICIBANK",
-      "Total Return": "0.0523",
-      CAGR: "0.1063",
-      "Annualized Volatility": "0.1089",
-      Sharpe: "0.9761",
-      "Max Drawdown": "-0.0287",
-      "Win Rate": "0.6000",
-    },
-  ] as CsvData,
-  trades: [
-    {
-      entry_date: "2025-09-04",
-      exit_date: "2025-09-11",
-      stock_a: "HDFCBANK",
-      stock_b: "ICICIBANK",
-      direction: "LONG_SPREAD",
-      entry_z: "-2.3411",
-      exit_z: "-0.2784",
-      holding_days: "5",
-      net_trade_return: "0.0312",
-      exit_reason: "MEAN_REVERSION_EXIT",
-      test_start: "2025-08-11",
-      test_end: "2026-02-06",
-    },
-    {
-      entry_date: "2025-10-16",
-      exit_date: "2025-10-24",
-      stock_a: "HDFCBANK",
-      stock_b: "ICICIBANK",
-      direction: "SHORT_SPREAD",
-      entry_z: "2.1878",
-      exit_z: "0.4102",
-      holding_days: "6",
-      net_trade_return: "0.0256",
-      exit_reason: "MEAN_REVERSION_EXIT",
-      test_start: "2025-08-11",
-      test_end: "2026-02-06",
-    },
-    {
-      entry_date: "2025-12-08",
-      exit_date: "2025-12-19",
-      stock_a: "HDFCBANK",
-      stock_b: "ICICIBANK",
-      direction: "LONG_SPREAD",
-      entry_z: "-2.5120",
-      exit_z: "1.2344",
-      holding_days: "9",
-      net_trade_return: "0.0189",
-      exit_reason: "MEAN_REVERSION_EXIT",
-      test_start: "2025-08-11",
-      test_end: "2026-02-06",
-    },
-    {
-      entry_date: "2025-03-17",
-      exit_date: "2025-03-25",
-      stock_a: "HDFCBANK",
-      stock_b: "ICICIBANK",
-      direction: "LONG_SPREAD",
-      entry_z: "-2.2867",
-      exit_z: "-0.3215",
-      holding_days: "6",
-      net_trade_return: "0.0271",
-      exit_reason: "MEAN_REVERSION_EXIT",
-      test_start: "2025-02-10",
-      test_end: "2025-08-08",
-    },
-    {
-      entry_date: "2025-05-05",
-      exit_date: "2025-05-18",
-      stock_a: "HDFCBANK",
-      stock_b: "ICICIBANK",
-      direction: "SHORT_SPREAD",
-      entry_z: "2.1034",
-      exit_z: "0.4987",
-      holding_days: "9",
-      net_trade_return: "0.0198",
-      exit_reason: "MEAN_REVERSION_EXIT",
-      test_start: "2025-02-10",
-      test_end: "2025-08-08",
-    },
-    {
-      entry_date: "2025-06-23",
-      exit_date: "2025-07-21",
-      stock_a: "HDFCBANK",
-      stock_b: "ICICIBANK",
-      direction: "LONG_SPREAD",
-      entry_z: "-2.0412",
-      exit_z: "-1.4203",
-      holding_days: "20",
-      net_trade_return: "-0.0121",
-      exit_reason: "TIME_STOP",
-      test_start: "2025-02-10",
-      test_end: "2025-08-08",
-    },
-  ] as CsvData,
-  signal: {
-    spread: -2.34,
-    direction: "LONG SPREAD" as const,
-    legs: [
-      { side: "BUY" as const, ticker: "HDFCBANK", multiplier: 1 },
-      { side: "SHORT" as const, ticker: "ICICIBANK", multiplier: 1.22 },
-    ],
-  } as LiveSignal,
-};
-
-// ── Dummy data generators (deterministic per pair/window) ──
-function seededRand(seed: number, offset: number): number {
-  return ((seed * 9301 + offset * 49297 + 4223) % 233280) / 233280;
-}
-
-function hashSeed(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 1_000_000;
-  return h;
-}
-
-function generateDummySummary(
-  stockA: string,
-  stockB: string,
-  testStart: string
-): Record<string, string> {
-  const seed = hashSeed(`${stockA}|${stockB}|${testStart}`);
-  const totalReturn = 0.04 + seededRand(seed, 1) * 0.14;
-  const cagr = totalReturn * (1.6 + seededRand(seed, 2) * 0.6);
-  const vol = 0.08 + seededRand(seed, 3) * 0.12;
-  const sharpe = 0.7 + seededRand(seed, 4) * 1.4;
-  const maxDD = -(0.02 + seededRand(seed, 5) * 0.055);
-  const winRate = 0.48 + seededRand(seed, 6) * 0.22;
-  return {
-    stock_a: stockA,
-    stock_b: stockB,
-    test_start: testStart,
-    "Total Return": totalReturn.toFixed(6),
-    CAGR: cagr.toFixed(6),
-    "Annualized Volatility": vol.toFixed(6),
-    Sharpe: sharpe.toFixed(6),
-    "Max Drawdown": maxDD.toFixed(6),
-    "Win Rate": winRate.toFixed(6),
-  };
-}
-
-function generateDummyTrades(
-  stockA: string,
-  stockB: string,
-  testStart: string,
-  testEnd: string
-): CsvData {
-  const seed = hashSeed(`${stockA}|${stockB}|${testStart}|trades`);
-  const nTrades = 2 + Math.floor(seededRand(seed, 0) * 3); // 2-4 trades
-  const start = new Date(testStart);
-  const end = new Date(testEnd);
-  const spanMs = end.getTime() - start.getTime();
-
-  const addDays = (d: Date, days: number): Date => {
-    const r = new Date(d);
-    r.setDate(r.getDate() + days);
-    return r;
-  };
-
-  const trades: CsvData = [];
-  for (let i = 0; i < nTrades; i++) {
-    const frac = (i + 1) / (nTrades + 1);
-    const entry = new Date(start.getTime() + frac * spanMs);
-    const holdDays = 5 + Math.floor(seededRand(seed, i * 10 + 1) * 14);
-    const exit = addDays(entry, holdDays);
-    const isLong = seededRand(seed, i * 10 + 2) > 0.5;
-    const entryZ = isLong ? -(2.0 + seededRand(seed, i * 10 + 3) * 0.8) : 2.0 + seededRand(seed, i * 10 + 4) * 0.8;
-    const exitZ = (seededRand(seed, i * 10 + 5) - 0.5) * 1.2;
-    const ret = 0.005 + seededRand(seed, i * 10 + 6) * 0.045 - (seededRand(seed, i * 10 + 7) > 0.75 ? 0.03 : 0);
-    const exitReasons = ["MEAN_REVERSION_EXIT", "MEAN_REVERSION_EXIT", "TIME_STOP"];
-    const exitReason = exitReasons[Math.floor(seededRand(seed, i * 10 + 8) * exitReasons.length)];
-
-    trades.push({
-      entry_date: entry.toISOString().slice(0, 10),
-      exit_date: exit.toISOString().slice(0, 10),
-      stock_a: stockA,
-      stock_b: stockB,
-      direction: isLong ? "LONG_SPREAD" : "SHORT_SPREAD",
-      entry_z: entryZ.toFixed(4),
-      exit_z: exitZ.toFixed(4),
-      holding_days: String(holdDays),
-      net_trade_return: ret.toFixed(6),
-      exit_reason: exitReason,
-      test_start: testStart,
-      test_end: testEnd,
-    });
-  }
-  return trades;
 }
 
 // ── Historical Backtest Panel (expanded view) ──
@@ -477,9 +237,13 @@ function BacktestPanel({
 // ── Main Pair Cards (current / live) ──
 function LivePairCards({
   selectedPairs,
+  pairSummary,
+  tradeLog,
   prices,
 }: {
   selectedPairs: CsvData;
+  pairSummary: CsvData;
+  tradeLog: CsvData;
   prices: CsvData;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -493,7 +257,14 @@ function LivePairCards({
     );
   }
 
-  // Group by pair, pick the latest window (most recent test_start) as "current"
+  // Find the most recent walk-forward window's test_start — this is the
+  // current forward-test period; only pairs from that window are tradeable today.
+  const latestTestStart = selectedPairs
+    .map((r) => r.test_start)
+    .reduce((max, ts) => (ts.localeCompare(max) > 0 ? ts : max), "");
+
+  // Group ALL historical occurrences of each pair by stock_a|stock_b so the
+  // backtest dropdown still has full history.
   const pairGroups = new Map<string, CsvData>();
   for (const row of selectedPairs) {
     const k = `${row.stock_a}|${row.stock_b}`;
@@ -501,47 +272,22 @@ function LivePairCards({
     pairGroups.get(k)!.push(row);
   }
 
-  // Sort each group by test_start descending, current = latest
-  const livePairs: {
-    key: string;
-    current: Record<string, string>;
-    history: CsvData;
-    demoSignal?: LiveSignal;
-    isDemo?: boolean;
-  }[] = Array.from(pairGroups.entries()).map(([k, rows]) => {
-    const sorted = [...rows].sort((a, b) => b.test_start.localeCompare(a.test_start));
-    return { key: k, current: sorted[0], history: sorted };
-  });
+  // Only keep pairs that appeared in the latest forward-test window.
+  const livePairs = Array.from(pairGroups.entries())
+    .map(([k, rows]) => {
+      const sorted = [...rows].sort((a, b) => b.test_start.localeCompare(a.test_start));
+      return { key: k, current: sorted[0], history: sorted };
+    })
+    .filter(({ current }) => current.test_start === latestTestStart);
 
-  // Sort live pairs by latest test_start descending (newest pairs first)
-  livePairs.sort((a, b) => b.current.test_start.localeCompare(a.current.test_start));
+  // Determine if those pairs are still actionable today (window not yet expired).
+  const latestTestEnd = livePairs[0]?.current.test_end;
+  const stale = !isLiveWindow(latestTestEnd);
 
-  // Inject a demo pair with an active signal at the top (for demonstration)
-  livePairs.unshift({
-    key: DEMO_PAIR.key,
-    current: DEMO_PAIR.current,
-    history: DEMO_PAIR.history,
-    demoSignal: DEMO_PAIR.signal,
-    isDemo: true,
-  });
-
-  // Build dummy summary map (replaces real backtest data with generated values)
+  // Build summary map from real CSV data
   const summaryMap = new Map<string, Record<string, string>>();
-  for (const pair of livePairs) {
-    for (const win of pair.history) {
-      const key = `${win.stock_a}|${win.stock_b}|${win.test_start}`;
-      summaryMap.set(key, generateDummySummary(win.stock_a, win.stock_b, win.test_start));
-    }
-  }
-
-  // Build dummy trades list (replaces real trade log)
-  const dummyTrades: CsvData = [];
-  for (const pair of livePairs) {
-    for (const win of pair.history) {
-      dummyTrades.push(
-        ...generateDummyTrades(win.stock_a, win.stock_b, win.test_start, win.test_end)
-      );
-    }
+  for (const s of pairSummary) {
+    summaryMap.set(`${s.stock_a}|${s.stock_b}|${s.test_start}`, s);
   }
 
   const toggle = (k: string) => {
@@ -553,19 +299,43 @@ function LivePairCards({
     });
   };
 
+  // No live signals — most recent strategy run produced nothing actionable today.
+  if (stale) {
+    return (
+      <div className="bg-gray-900 border border-gray-700 rounded-lg p-8 text-center">
+        <p className="text-gray-200 text-lg font-semibold">No actionable pairs today</p>
+        <p className="text-gray-500 text-sm mt-2 max-w-xl mx-auto">
+          The most recent strategy run did not find any pair that meets all of the
+          correlation, cointegration, ADF, and half-life filters in the current
+          training window. Pair trading has dry spells — re-run after market close
+          tomorrow, or loosen filters in <code className="text-gray-400">KMeansPairTrading.py</code> if
+          you want to surface borderline candidates.
+        </p>
+        {latestTestEnd && (
+          <p className="text-gray-600 text-xs mt-3">
+            Last actionable window ended <span className="font-mono">{latestTestEnd}</span>
+          </p>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="bg-blue-950/30 border border-blue-900/60 rounded-lg px-4 py-3">
         <p className="text-sm text-blue-200">
-          Showing <span className="font-bold">{livePairs.length}</span> pair{livePairs.length === 1 ? "" : "s"} from the most recent walk-forward window.
+          Showing <span className="font-bold">{livePairs.length}</span> forward-test pair{livePairs.length === 1 ? "" : "s"} for the current window
+          {latestTestStart && (
+            <> (<span className="font-mono">{latestTestStart}</span>)</>
+          )}.
           Click <span className="font-medium">Backtested Results</span> on any pair to view historical performance.
         </p>
       </div>
 
-      {livePairs.map(({ key, current, history, demoSignal }) => {
+      {livePairs.map(({ key, current, history }) => {
         const isExpanded = expanded.has(key);
-        const signal = demoSignal ?? computeLiveSignal(current, prices);
-        const trades = dummyTrades;
+        const signal = computeLiveSignal(current, prices);
+        const trades = tradeLog;
         return (
           <div key={key} className="bg-gray-900 border border-gray-700 rounded-lg overflow-hidden">
             {/* Header */}
@@ -620,7 +390,7 @@ function LivePairCards({
                     <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">
                       Recommended Action
                     </p>
-                    <div className="flex flex-wrap gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
                       {signal.legs.map((leg, i) => {
                         const isBuy = leg.side === "BUY";
                         const isHedged = leg.multiplier !== 1;
@@ -653,6 +423,23 @@ function LivePairCards({
                           </div>
                         );
                       })}
+                      <button
+                        onClick={() => {
+                          openTrade({
+                            pair: `${current.stock_a}/${current.stock_b}`,
+                            stockA: current.stock_a,
+                            stockB: current.stock_b,
+                            sector: current.sector,
+                            direction: signal.direction as "LONG SPREAD" | "SHORT SPREAD",
+                            hedgeRatio: parseFloat(current.hedge_ratio),
+                            entryZ: signal.spread,
+                          });
+                          window.location.href = "/active-trades";
+                        }}
+                        className="ml-2 px-5 py-3 rounded-lg border-2 border-blue-400 bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-lg transition-colors"
+                      >
+                        Take Trade →
+                      </button>
                     </div>
                   </div>
                 ) : (
@@ -663,6 +450,91 @@ function LivePairCards({
                 )}
               </div>
             )}
+
+            {/* Historical performance probability bar */}
+            {(() => {
+              const pairTrades = tradeLog.filter(
+                (t) => t.stock_a === current.stock_a && t.stock_b === current.stock_b
+              );
+              if (pairTrades.length === 0) return null;
+              const returns = pairTrades
+                .map((t) => parseFloat(t.net_trade_return))
+                .filter((v) => !isNaN(v));
+              const wins = returns.filter((r) => r > 0).length;
+              const winRate = returns.length ? wins / returns.length : 0;
+              const avgRet = returns.length ? returns.reduce((s, v) => s + v, 0) / returns.length : 0;
+              const meanRevExits = pairTrades.filter(
+                (t) => t.exit_reason === "MEAN_REVERSION_EXIT"
+              ).length;
+              const reversionRate = pairTrades.length ? meanRevExits / pairTrades.length : 0;
+
+              const winColor =
+                winRate >= 0.55
+                  ? "bg-green-900/40 text-green-300 border-green-700"
+                  : winRate >= 0.4
+                  ? "bg-yellow-900/40 text-yellow-300 border-yellow-700"
+                  : "bg-red-900/40 text-red-300 border-red-700";
+              const barColor =
+                winRate >= 0.55
+                  ? "bg-green-500"
+                  : winRate >= 0.4
+                  ? "bg-yellow-500"
+                  : "bg-red-500";
+
+              return (
+                <div className="px-6 py-4 border-b border-gray-700 bg-gray-950/30">
+                  <div className="flex flex-wrap items-center gap-4 mb-3">
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider">
+                      Historical Performance
+                    </p>
+                    <span
+                      className={`px-3 py-1 rounded text-sm font-bold border ${winColor}`}
+                      title="Probability of profitable trade based on past trades for this pair"
+                    >
+                      {(winRate * 100).toFixed(1)}% win rate
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {wins} / {returns.length} winning trade{returns.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+
+                  {/* Visual probability bar */}
+                  <div className="mb-3">
+                    <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full ${barColor} transition-all`}
+                        style={{ width: `${winRate * 100}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+                    {/* <div>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider">Total Trades</p>
+                      <p className="font-mono font-semibold text-gray-200 mt-0.5">{pairTrades.length}</p>
+                    </div> */}
+                    <div>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider">Avg Return / Trade</p>
+                      <p className={`font-mono font-semibold mt-0.5 ${colorClass(avgRet)}`}>
+                        {(avgRet * 100).toFixed(2)}%
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider">Mean-Reversion Exits</p>
+                      <p className="font-mono font-semibold text-gray-200 mt-0.5">
+                        {(reversionRate * 100).toFixed(0)}%
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider">Best Trade</p>
+                      <p className="font-mono font-semibold text-green-400 mt-0.5">
+                        +{(Math.max(...returns, 0) * 100).toFixed(2)}%
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Pair stats */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 divide-x divide-gray-800">
@@ -712,32 +584,37 @@ function SummaryTable({
   prices: CsvData;
   onViewDetails: () => void;
 }) {
-  // Build unique pair list with latest window + demo at top
-  const pairGroups = new Map<string, CsvData>();
-  for (const row of selectedPairs) {
-    const k = `${row.stock_a}|${row.stock_b}`;
-    if (!pairGroups.has(k)) pairGroups.set(k, []);
-    pairGroups.get(k)!.push(row);
-  }
+  // Only show pairs from the most recent (forward-test) walk-forward window.
+  const latestTestStart = selectedPairs
+    .map((r) => r.test_start)
+    .reduce((max, ts) => (ts.localeCompare(max) > 0 ? ts : max), "");
 
   const rows: { current: Record<string, string>; signal: LiveSignal | null }[] = [];
 
-  // Demo pair first
-  rows.push({ current: DEMO_PAIR.current, signal: DEMO_PAIR.signal });
+  const forwardPairs = selectedPairs.filter((r) => r.test_start === latestTestStart);
+  const latestTestEnd = forwardPairs[0]?.test_end;
+  const stale = !isLiveWindow(latestTestEnd);
 
-  // Real pairs
-  const realPairs = Array.from(pairGroups.values())
-    .map((grp) => [...grp].sort((a, b) => b.test_start.localeCompare(a.test_start))[0])
-    .sort((a, b) => b.test_start.localeCompare(a.test_start));
-
-  for (const current of realPairs) {
-    rows.push({ current, signal: computeLiveSignal(current, prices) });
+  if (!stale) {
+    for (const current of forwardPairs) {
+      rows.push({ current, signal: computeLiveSignal(current, prices) });
+    }
   }
 
   if (rows.length === 0) {
     return (
       <div className="bg-gray-900 border border-gray-700 rounded-lg p-8 text-center">
-        <p className="text-gray-400 text-lg">No pairs available.</p>
+        <p className="text-gray-200 text-lg font-semibold">No trades to take today</p>
+        <p className="text-gray-500 text-sm mt-2 max-w-xl mx-auto">
+          {stale
+            ? `The latest strategy run found 0 pairs passing all filters in the current training window.`
+            : `No pairs available — run the strategy first.`}
+        </p>
+        {stale && latestTestEnd && (
+          <p className="text-gray-600 text-xs mt-3">
+            Last actionable window ended <span className="font-mono">{latestTestEnd}</span>
+          </p>
+        )}
       </div>
     );
   }
@@ -987,21 +864,24 @@ export default function Dashboard() {
     fetchAll();
   }, []);
 
-  const uniquePairsCount = new Set(
-    data.selectedPairs.map((r) => `${r.stock_a}_${r.stock_b}`)
-  ).size + 1; // +1 for demo pair
+  // Filter to current forward-test window only — same logic as the tabs use.
+  const latestTestStart = data.selectedPairs
+    .map((r) => r.test_start)
+    .reduce((max, ts) => (ts.localeCompare(max) > 0 ? ts : max), "");
 
-  // Dummy trades total: sum across all pair-windows (real pairs + demo history)
-  const totalDummyTrades = (() => {
-    let count = 0;
-    for (const row of data.selectedPairs) {
-      count += generateDummyTrades(row.stock_a, row.stock_b, row.test_start, row.test_end).length;
-    }
-    for (const win of DEMO_PAIR.history) {
-      count += generateDummyTrades(win.stock_a, win.stock_b, win.test_start, win.test_end).length;
-    }
-    return count;
-  })();
+  const forwardPairs = data.selectedPairs.filter(
+    (r) => r.test_start === latestTestStart
+  );
+
+  // If the latest window's test_end is in the past, treat as no live signals.
+  const latestTestEnd = forwardPairs[0]?.test_end;
+  const liveStale = !isLiveWindow(latestTestEnd);
+  const livePairs = liveStale ? [] : forwardPairs;
+
+  const uniquePairsCount = new Set(
+    livePairs.map((r) => `${r.stock_a}_${r.stock_b}`)
+  ).size;
+
 
   const TABS = [
     { key: "summary", label: "Summary" },
@@ -1012,16 +892,24 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
       <header className="border-b border-gray-800 bg-gray-900/50 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <h1 className="text-xl font-bold tracking-tight">KMeans Pair Trading</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Strategy Report Console</p>
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">KMeans Pair Trading</h1>
+            <p className="text-gray-500 text-sm mt-0.5">Strategy Report Console</p>
+          </div>
+          <Link
+            href="/active-trades"
+            className="px-4 py-2 rounded-md border border-blue-700 bg-blue-900/40 text-blue-200 hover:bg-blue-800/60 text-sm font-medium transition-colors"
+          >
+            Active Trades →
+          </Link>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-6 space-y-6">
         <div className="grid grid-cols-2 gap-4">
           <SummaryCard label="Unique Pairs" value={loading ? "..." : String(uniquePairsCount)} />
-          <SummaryCard label="Total Trades" value={loading ? "..." : String(totalDummyTrades)} />
+          {/* <SummaryCard label="Total Trades" value={loading ? "..." : String(totalTradesCount)} /> */}
         </div>
 
         <div className="flex gap-1 bg-gray-900 border border-gray-700 rounded-lg p-1">
@@ -1051,6 +939,8 @@ export default function Dashboard() {
         ) : activeTab === "pairs" ? (
           <LivePairCards
             selectedPairs={data.selectedPairs}
+            pairSummary={data.pairSummary}
+            tradeLog={data.tradeLog}
             prices={data.prices}
           />
         ) : (

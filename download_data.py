@@ -7,6 +7,8 @@ Usage:
     python3 download_data.py
 """
 
+from datetime import datetime, timedelta
+
 import yfinance as yf
 import pandas as pd
 
@@ -45,7 +47,8 @@ STOCK_SECTORS = {
 }
 
 START_DATE = "2021-01-01"
-END_DATE = "2026-04-16"
+# End date is exclusive in yfinance, so add 1 day to include today
+END_DATE = (datetime.today() + timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def main():

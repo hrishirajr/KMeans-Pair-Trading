@@ -49,6 +49,14 @@ class StrategyConfig:
     top_pairs_per_cluster: int = 3
     same_sector_only: bool = True
 
+    # When True (default), pair candidates must share BOTH the same KMeans cluster
+    # AND the same sector. When False, KMeans is bypassed and pairs are grouped
+    # purely by sector — equivalent to exhaustive same-sector candidate generation
+    # with a top-N-per-sector cap. KMeans on momentum/volatility features is not a
+    # cointegration filter, so disabling it can recover same-sector pairs that the
+    # cluster step discarded.
+    use_kmeans_clustering: bool = True
+
     min_correlation: float = 0.70
     max_cointegration_pvalue: float = 0.05
     max_adf_pvalue: float = 0.10
@@ -56,11 +64,18 @@ class StrategyConfig:
     min_half_life: int = 2
     max_half_life: int = 60
 
+
     z_window: int = 20
-    z_entry: float = 2.0
+    z_entry_min: float = 1.80
+    z_entry_max: float = 2.10
     z_exit: float = 0.5
     z_stop: float = 3.5
     max_holding_period: int = 20
+
+    # Exit if rolling-beta drifts by more than this fraction from the
+    # entry beta. Catches structural breaks where the pair is no longer
+    # behaving as the historical cointegration test implied.
+    max_beta_drift: float = 0.20
 
     rolling_beta_window: int = 60
     transaction_cost_per_leg: float = 0.0005
@@ -361,11 +376,13 @@ def backtest_pair_v2(
 
     position = 0
     holding_days = 0
+    entry_idx = None
     entry_date = None
     entry_z = None
     entry_spread = None
     entry_a = None
     entry_b = None
+    entry_beta = None
 
     positions = []
     signals = []
@@ -384,24 +401,33 @@ def backtest_pair_v2(
         if position == 0:
             holding_days = 0
 
-            if z < -config.z_entry:
+            # Band entry: enter only when |z| is in [z_entry_min, z_entry_max].
+            # The upper bound is a structural-break filter — empirically, high |z|
+            # on this universe predicts breakdown rather than stronger reversion,
+            # so entries above ~2.1 systematically lose money. The band is meant
+            # to keep selection in the "stretched but not broken" regime.
+            if -config.z_entry_max <= z <= -config.z_entry_min:
                 position = 1   # long spread
                 holding_days = 1
+                entry_idx = i
                 entry_date = dt
                 entry_z = z
                 entry_spread = df["spread"].iloc[i]
                 entry_a = df[stock_a].iloc[i]
                 entry_b = df[stock_b].iloc[i]
+                entry_beta = df["beta"].iloc[i]
                 signal = "ENTER_LONG_SPREAD"
 
-            elif z > config.z_entry:
+            elif config.z_entry_min <= z <= config.z_entry_max:
                 position = -1  # short spread
                 holding_days = 1
+                entry_idx = i
                 entry_date = dt
                 entry_z = z
                 entry_spread = df["spread"].iloc[i]
                 entry_a = df[stock_a].iloc[i]
                 entry_b = df[stock_b].iloc[i]
+                entry_beta = df["beta"].iloc[i]
                 signal = "ENTER_SHORT_SPREAD"
 
         else:
@@ -409,10 +435,26 @@ def backtest_pair_v2(
 
             exit_reason = None
 
+            current_beta = df["beta"].iloc[i]
+            beta_drift = (
+                abs(current_beta - entry_beta) / abs(entry_beta)
+                if entry_beta and not pd.isna(current_beta) and entry_beta != 0
+                else 0.0
+            )
+
             if abs(z) < config.z_exit:
                 exit_reason = "MEAN_REVERSION_EXIT"
-            elif abs(z) > config.z_stop:
+            elif (position * z) < -config.z_stop:
+                # Directional: long-spread (position=+1) stops only when z drifts
+                # further BELOW -z_stop; short-spread (position=-1) only above +z_stop.
+                # Replaces the symmetric abs(z) > z_stop which also fired on favorable
+                # overshoots and missed slow adverse drifts.
                 exit_reason = "ZSCORE_STOP"
+            elif beta_drift > config.max_beta_drift:
+                # Structural-break kill switch. If the rolling hedge ratio has moved
+                # more than max_beta_drift from where we entered, the historical
+                # cointegration that justified this trade no longer applies — exit.
+                exit_reason = "BETA_DRIFT_STOP"
             elif holding_days >= config.max_holding_period:
                 exit_reason = "TIME_STOP"
 
@@ -420,17 +462,13 @@ def backtest_pair_v2(
                 exit_a = df[stock_a].iloc[i]
                 exit_b = df[stock_b].iloc[i]
                 exit_spread = df["spread"].iloc[i]
+                direction = "LONG_SPREAD" if position == 1 else "SHORT_SPREAD"
 
-                if position == 1:
-                    gross_trade_return = ((exit_a / entry_a) - 1) - df["beta"].iloc[i] * ((exit_b / entry_b) - 1)
-                    direction = "LONG_SPREAD"
-                else:
-                    gross_trade_return = -((exit_a / entry_a) - 1) + df["beta"].iloc[i] * ((exit_b / entry_b) - 1)
-                    direction = "SHORT_SPREAD"
-
-                approx_cost = 4 * config.transaction_cost_per_leg  # enter two legs + exit two legs
-                net_trade_return = gross_trade_return - approx_cost
-
+                # PnL is filled in after the loop by compounding the daily
+                # gross/net return series over [entry_idx, exit_idx]. That
+                # keeps the trade log internally consistent with the daily
+                # equity curve (and with the rolling-beta hedge that drifts
+                # within the holding window).
                 trade_log.append({
                     "entry_date": entry_date,
                     "exit_date": dt,
@@ -446,18 +484,20 @@ def backtest_pair_v2(
                     "entry_price_b": entry_b,
                     "exit_price_a": exit_a,
                     "exit_price_b": exit_b,
-                    "gross_trade_return": gross_trade_return,
-                    "net_trade_return": net_trade_return,
                     "exit_reason": exit_reason,
+                    "_entry_idx": entry_idx,
+                    "_exit_idx": i,
                 })
 
                 position = 0
                 holding_days = 0
+                entry_idx = None
                 entry_date = None
                 entry_z = None
                 entry_spread = None
                 entry_a = None
                 entry_b = None
+                entry_beta = None
                 signal = exit_reason
 
         positions.append(position)
@@ -467,11 +507,45 @@ def backtest_pair_v2(
     df["signal"] = signals
     df["position_shifted"] = df["position"].shift(1).fillna(0)
 
-    df["gross_return"] = df["position_shifted"] * (df["ret_a"] - df["beta"] * df["ret_b"])
+    # Lagged beta avoids look-ahead: beta.iloc[t] is fit on prices through t,
+    # so today's PnL must use yesterday's beta.
+    #
+    # Dimensional fix: beta is fit in price-space (OLS of price_y on price_x),
+    # so it has units P_A/P_B. Multiplying by a dimensionless return is
+    # incorrect — it implicitly sizes the short leg as $beta of B per $1 of A,
+    # over-leveraging by a factor of (P_B/P_A) for pairs with mismatched price
+    # levels. The correct dollar-neutral hedge weight is beta * (P_B/P_A):
+    # for $1 long A, short $beta*(P_B/P_A) of B.
+    beta_used = df["beta"].shift(1)
+    price_ratio_lag = x.shift(1) / y.shift(1)
+    hedge_weight = beta_used * price_ratio_lag
+    df["beta_used"] = beta_used
+    df["hedge_weight"] = hedge_weight
+
+    df["gross_return"] = (
+        df["position_shifted"] * (df["ret_a"] - hedge_weight * df["ret_b"])
+    ).fillna(0.0)
     df["turnover"] = df["position"].diff().abs().fillna(abs(df["position"]))
-    df["cost"] = df["turnover"] * (2 * config.transaction_cost_per_leg)
+    # Cost charged per leg on its own notional: long-A is $1, short-B is
+    # $hedge_weight per unit of spread, so a position change of magnitude
+    # |Δposition|=1 incurs (1 + hedge_weight) * tx_cost per leg-transaction.
+    df["cost"] = (
+        df["turnover"] * (1.0 + hedge_weight) * config.transaction_cost_per_leg
+    ).fillna(0.0)
     df["net_return"] = df["gross_return"] - df["cost"]
     df["equity_curve"] = (1 + df["net_return"]).cumprod()
+
+    # Back-fill trade-level PnL from the daily series. Slice covers entry day
+    # through exit day inclusive: entry day captures the entry cost (gross=0,
+    # cost=2tx); the open-position days capture spread PnL; exit day captures
+    # the exit cost and final-day PnL.
+    for trade in trade_log:
+        e_idx = trade.pop("_entry_idx")
+        x_idx = trade.pop("_exit_idx")
+        gross_slice = df["gross_return"].iloc[e_idx:x_idx + 1]
+        net_slice = df["net_return"].iloc[e_idx:x_idx + 1]
+        trade["gross_trade_return"] = float((1.0 + gross_slice).prod() - 1.0)
+        trade["net_trade_return"] = float((1.0 + net_slice).prod() - 1.0)
 
     trade_log_df = pd.DataFrame(trade_log)
     return df, trade_log_df
@@ -520,8 +594,12 @@ def aggregate_portfolio(pair_result_dict: Dict[str, pd.DataFrame]) -> pd.DataFra
     if not series_list:
         return pd.DataFrame()
 
-    combined = pd.concat(series_list, axis=1).fillna(0.0)
-    combined["portfolio_return"] = combined.mean(axis=1)
+    # Don't fillna here: NaN means "this pair-window isn't live on this day",
+    # which is different from "live but flat" (== 0.0). Daily mean must only
+    # average across pair-windows actually in their test period.
+    combined = pd.concat(series_list, axis=1)
+    combined["live_pair_count"] = combined.drop(columns=[], errors="ignore").notna().sum(axis=1)
+    combined["portfolio_return"] = combined.drop(columns=["live_pair_count"]).mean(axis=1).fillna(0.0)
     combined["portfolio_equity"] = (1 + combined["portfolio_return"]).cumprod()
     return combined
 
@@ -592,7 +670,11 @@ def run_walk_forward_v2(
     start_idx = config.train_window
     iteration = 0
 
-    while start_idx + config.test_window <= len(dates):
+    # Run an iteration for every step_size as long as we have enough training data.
+    # The test window can be shorter than config.test_window — even zero — at the
+    # tail of the data. Pair *selection* still runs; *backtesting* is skipped when
+    # the test slice is too short to score reliably.
+    while start_idx <= len(dates):
         iteration += 1
 
         train_prices = prices.iloc[start_idx - config.train_window:start_idx]
@@ -603,15 +685,36 @@ def run_walk_forward_v2(
             start_idx += config.step_size
             continue
 
-        clustered = cluster_stocks(features, config.n_clusters, config.random_state)
-        clustered = attach_sector_info(clustered, sector_map)
+        if config.use_kmeans_clustering:
+            clustered = cluster_stocks(features, config.n_clusters, config.random_state)
+            clustered = attach_sector_info(clustered, sector_map)
+        else:
+            # Bypass KMeans: encode sector as the cluster key. The candidate-pair
+            # loop then iterates per-sector instead of per-cluster, recovering all
+            # same-sector pairs that the momentum-feature clustering would have
+            # discarded for non-cointegration reasons.
+            clustered = features.copy()
+            clustered = attach_sector_info(clustered, sector_map)
+            sector_codes = pd.Categorical(clustered["sector"]).codes
+            clustered["cluster"] = sector_codes
 
         candidate_pairs = find_candidate_pairs(train_prices, clustered, config)
+
+        # Determine the labelled window even when the test slice is short/empty.
+        if len(test_prices) > 0:
+            window_start = test_prices.index[0]
+            window_end = test_prices.index[-1]
+        else:
+            # No future data — forward-trade window starts the next business day
+            # and runs config.test_window business days into the future.
+            window_start = train_prices.index[-1] + pd.tseries.offsets.BDay(1)
+            window_end = window_start + pd.tseries.offsets.BDay(config.test_window - 1)
 
         print(
             f"Iteration {iteration} | "
             f"Train: {train_prices.index[0].date()} -> {train_prices.index[-1].date()} | "
-            f"Test: {test_prices.index[0].date()} -> {test_prices.index[-1].date()} | "
+            f"Window: {window_start.date()} -> {window_end.date()} "
+            f"(test_data={len(test_prices)} days) | "
             f"Pairs selected: {len(candidate_pairs)}"
         )
 
@@ -619,15 +722,21 @@ def run_walk_forward_v2(
             start_idx += config.step_size
             continue
 
+        # Backtest only when we have enough test data to compute z-scores.
+        can_backtest = len(test_prices) >= max(config.z_window, config.rolling_beta_window) + 5
+
         for _, pair in candidate_pairs.iterrows():
             a = pair["stock_a"]
             b = pair["stock_b"]
 
             pair_selection_rows.append({
-                "test_start": test_prices.index[0],
-                "test_end": test_prices.index[-1],
+                "test_start": window_start,
+                "test_end": window_end,
                 **pair.to_dict()
             })
+
+            if not can_backtest:
+                continue
 
             bt_df, trade_log_df = backtest_pair_v2(
                 test_prices=test_prices,
@@ -639,13 +748,13 @@ def run_walk_forward_v2(
             if bt_df.empty:
                 continue
 
-            pair_key = f"{test_prices.index[0].date()}__{a}__{b}"
+            pair_key = f"{window_start.date()}__{a}__{b}"
             pair_results[pair_key] = bt_df
 
             metrics = compute_performance_metrics(bt_df["net_return"])
             summary_rows.append({
-                "test_start": test_prices.index[0],
-                "test_end": test_prices.index[-1],
+                "test_start": window_start,
+                "test_end": window_end,
                 "stock_a": a,
                 "stock_b": b,
                 "sector": pair["sector"],
@@ -659,11 +768,48 @@ def run_walk_forward_v2(
             })
 
             if not trade_log_df.empty:
-                trade_log_df["test_start"] = test_prices.index[0]
-                trade_log_df["test_end"] = test_prices.index[-1]
+                trade_log_df["test_start"] = window_start
+                trade_log_df["test_end"] = window_end
                 all_trade_logs.append(trade_log_df)
 
         start_idx += config.step_size
+
+    # ── Live forward-trading pass ──────────────────────────────────
+    # Train on the most recent train_window days and select pairs without
+    # requiring a complete out-of-sample test window. These are TODAY's
+    # tradeable signals; backtest stats won't exist for them yet.
+    if len(dates) >= config.train_window:
+        live_train = prices.iloc[-config.train_window:]
+        live_features = compute_stock_features(live_train)
+
+        if len(live_features) >= config.n_clusters:
+            if config.use_kmeans_clustering:
+                live_clustered = cluster_stocks(live_features, config.n_clusters, config.random_state)
+                live_clustered = attach_sector_info(live_clustered, sector_map)
+            else:
+                live_clustered = attach_sector_info(live_features.copy(), sector_map)
+                live_clustered["cluster"] = pd.Categorical(live_clustered["sector"]).codes
+            live_candidates = find_candidate_pairs(live_train, live_clustered, config)
+
+            last_train_date = live_train.index[-1]
+            live_test_start = last_train_date + pd.tseries.offsets.BDay(1)
+            # Use max_holding_period (actual trade horizon), not test_window (backtest length),
+            # so the UI shows a realistic forward window for today's signal.
+            live_test_end = live_test_start + pd.tseries.offsets.BDay(config.max_holding_period - 1)
+
+            print(
+                f"Iteration LIVE | "
+                f"Train: {live_train.index[0].date()} -> {last_train_date.date()} | "
+                f"Forward: {live_test_start.date()} -> {live_test_end.date()} | "
+                f"Pairs selected: {len(live_candidates)}"
+            )
+
+            for _, pair in live_candidates.iterrows():
+                pair_selection_rows.append({
+                    "test_start": live_test_start,
+                    "test_end": live_test_end,
+                    **pair.to_dict()
+                })
 
     summary_df = pd.DataFrame(summary_rows)
     trade_log_df = pd.concat(all_trade_logs, ignore_index=True) if all_trade_logs else pd.DataFrame()
@@ -693,7 +839,8 @@ def main():
         min_half_life=2,
         max_half_life=60,
         z_window=20,
-        z_entry=2.0,
+        z_entry_min=1.80,
+        z_entry_max=2.10,
         z_exit=0.5,
         z_stop=3.5,
         max_holding_period=20,
